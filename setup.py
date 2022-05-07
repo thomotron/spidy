@@ -50,6 +50,7 @@ setup(
         'requests',
         'lxml',
         'flake8',
-        'reppy'
+        'reppy',
+        'configargparse'
     ]
 )
