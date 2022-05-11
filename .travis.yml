@@ -23,5 +23,5 @@ install:
 script:
   - make
   # Test PyPI package
-  - pip3 install spidy-web-crawler
-  - pip3 show spidy-web-crawler | grep Version
+  #- pip3 install spidy-web-crawler
+  #- pip3 show spidy-web-crawler | grep Version
