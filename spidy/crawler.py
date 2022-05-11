@@ -15,7 +15,7 @@ from os import path, makedirs
 from copy import copy
 from lxml import etree
 from lxml.html import iterlinks, resolve_base_href, make_links_absolute
-from reppy.robots import Robots
+from configargparse import ArgumentParser
 
 try:
     from spidy import __version__
@@ -186,46 +186,6 @@ class ThreadSafeSet(list):
             self._set -= o
 
 
-class RobotsIndex(object):
-    """
-    Thread Safe Robots Index
-    """
-    def __init__(self, respect_robots, user_agent):
-        self.respect_robots = respect_robots
-        self.user_agent = user_agent
-        self.lock = threading.Lock()
-        self.index = {}
-
-    def is_allowed(self, start_url):
-        if self.respect_robots:
-            return self._lookup(start_url)
-        else:
-            return True
-
-    def size(self):
-        return len(self.index)
-
-    def _lookup(self, url):
-        hostname = urllib.parse.urlparse(url).hostname
-        if hostname not in self.index.keys():
-            with self.lock:
-                # check again to be sure
-                if hostname not in self.index.keys():
-                    self._remember(url)
-
-        return self.index[hostname].allowed(url)
-
-    def _remember(self, url):
-        urlparsed = urllib.parse.urlparse(url)
-        robots_url = urlparsed.scheme + '://' + urlparsed.netloc + '/robots.txt'
-        write_log('ROBOTS',
-                  'Reading robots.txt file at: {0}'.format(robots_url),
-                  package='reppy')
-        robots = Robots.fetch(robots_url)
-        checker = robots.agent(self.user_agent)
-        self.index[urlparsed.hostname] = checker
-
-
 #############
 # FUNCTIONS #
 #############
@@ -275,7 +235,7 @@ def crawl(url, thread_id=0):
     return links
 
 
-def crawl_worker(thread_id, robots_index):
+def crawl_worker(thread_id):
     """
     Crawler worker thread method
     """
@@ -288,7 +248,7 @@ def crawl_worker(thread_id, robots_index):
     global MAX_NEW_ERRORS, MAX_KNOWN_ERRORS, MAX_HTTP_ERRORS, MAX_NEW_MIMES
     global USE_CONFIG, OVERWRITE, RAISE_ERRORS, ZIP_FILES, OVERRIDE_SIZE, SAVE_WORDS, SAVE_PAGES, SAVE_COUNT
     global TODO_FILE, DONE_FILE, ERR_LOG_FILE, WORD_FILE
-    global RESPECT_ROBOTS, RESTRICT, DOMAIN
+    global RESTRICT, DOMAIN
     global WORDS, TODO, DONE, THREAD_RUNNING
 
     while THREAD_RUNNING:
@@ -346,7 +306,7 @@ def crawl_worker(thread_id, robots_index):
                 except queue.Empty:
                     continue
                 else:
-                    if check_link(url, robots_index):  # If the link is invalid
+                    if check_link(url):  # If the link is invalid
                         continue
                     links = crawl(url, thread_id)
                     for link in links:
@@ -434,15 +394,13 @@ def crawl_worker(thread_id, robots_index):
     write_log('CRAWL', 'Thread execution stopped.', worker=thread_id)
 
 
-def check_link(item, robots_index=None):
+def check_link(item):
     """
     Returns True if item is not a valid url.
     Returns False if item passes all inspections (is valid url).
     """
     # Shortest possible url being 'http://a.b', and
     # Links longer than 255 characters are usually too long for the filesystem to handle.
-    if robots_index and not robots_index.is_allowed(item):
-        return True
     if RESTRICT:
         if DOMAIN not in item:
             return True
@@ -828,7 +786,7 @@ no = ['n', 'no', 'N', 'No', 'False', 'false']
 HEADER = {}
 SAVE_COUNT, MAX_NEW_ERRORS, MAX_KNOWN_ERRORS, MAX_HTTP_ERRORS = 0, 0, 0, 0
 MAX_NEW_MIMES = 0
-RESPECT_ROBOTS, RESTRICT, DOMAIN = False, False, ''
+RESTRICT, DOMAIN = False, ''
 USE_CONFIG, OVERWRITE, RAISE_ERRORS, ZIP_FILES, OVERRIDE_SIZE = False, False, False, False, False
 SAVE_PAGES, SAVE_WORDS = False, False
 TODO_FILE, DONE_FILE, WORD_FILE = '', '', ''
@@ -853,309 +811,67 @@ def init():
     global MAX_NEW_ERRORS, MAX_KNOWN_ERRORS, MAX_HTTP_ERRORS, MAX_NEW_MIMES
     global USE_CONFIG, OVERWRITE, RAISE_ERRORS, ZIP_FILES, OVERRIDE_SIZE, SAVE_WORDS, SAVE_PAGES, SAVE_COUNT
     global TODO_FILE, DONE_FILE, ERR_LOG_FILE, WORD_FILE
-    global RESPECT_ROBOTS, RESTRICT, DOMAIN
-    global WORDS, TODO, DONE, THREAD_COUNT
+    global RESTRICT, DOMAIN
+    global WORDS, TODO, DONE, THREAD_COUNT, START
 
     # Getting Arguments
 
-    if not path.exists(path.join(PACKAGE_DIR, 'config')):
-        write_log('INIT', 'No config folder available.')
-        USE_CONFIG = False
+    # Parse arguments from CLI, default config file if present, and external config file if specified
+    parser = ArgumentParser(description='Spidy, the simple, easy to use command line web crawler', default_config_files=[path.join(PACKAGE_DIR, 'config', 'default.cfg')])
+    parser.add_argument('-c', '--config',       metavar='PATH', is_config_file_arg=True,    help='Path to config file')
+    parser.add_argument('-t', '--thread-count', default=1, metavar='NUM', type=int, dest='thread_count', help='Number of parallel threads to be used for crawler (default: %(default)d)')
+    parser.add_argument('--overwrite',          action='store_true',                        help='Overwrite existing save files (default: %(default)s)')
+    parser.add_argument('--raise-errors',       action='store_true',                        help='Raise errors and stop crawling when they occur (default: %(default)s)')
+    parser.add_argument('-p', '--save-pages',   action='store_true',                        help='Save crawled pages (default: %(default)s)')
+    parser.add_argument('-w', '--save-words',   action='store_true',                        help='Save words (default: %(default)s)')
+    parser.add_argument('-z', '--zip-files',    action='store_true',                        help='Zip save files (default: %(default)s)')
+    parser.add_argument('--override-size',      action='store_true',                        help='Allow downloading documents larger than 500MB (default: %(default)s)')
+    parser.add_argument('-d', '--domain',       default='',                                 help='Domain or base URI to restrict crawling to')
+    parser.add_argument('--todo-file',          default='crawler_todo.txt', metavar='PATH', help='Path to TODO file (default: %(default)s)')
+    parser.add_argument('--done-file',          default='crawler_done.txt', metavar='PATH', help='Path to DONE file (default: %(default)s)')
+    parser.add_argument('--word-file',          default='crawler_words.txt', metavar='PATH',help='Path to words file (default: %(default)s)')
+    parser.add_argument('--save-count',         default=100, metavar='NUM', type=int,       help='Number of queries before saving (default: %(default)d)')
+    parser.add_argument('--header-preset',      default='spidy', choices=HEADERS.keys(), metavar='PRESET', help='Header preset to use for crawler (default: %(default)s)')
+    parser.add_argument('--header',             action='append', default=[],                help='Custom header to use for crawler. Interpreted as key=value pair')
+    parser.add_argument('--max-new-errors',     default=5, metavar='NUM', type=int,         help='Number of new errors before stopping crawler (default: %(default)d)')
+    parser.add_argument('--max-known-errors',   default=10, metavar='NUM', type=int,        help='Number of known errors before stopping cralwer (default: %(default)d)')
+    parser.add_argument('--max-http-errors',    default=20, metavar='NUM', type=int,        help='Number of HTTP errors before stopping crawler (default: %(default)d)')
+    parser.add_argument('--max-new-mimes',      default=10, metavar='NUM', type=int,        help='Number of new MIME types before stopping crawler (default: %(default)d)')
+    parser.add_argument('start',                nargs='*', default=[], metavar='url',       help='URL(s) to start crawling from')
+    args = parser.parse_args()
+
+    # Plug in argument values
+    THREAD_COUNT = int(args.thread_count)
+    OVERWRITE = args.overwrite
+    RAISE_ERRORS = args.raise_errors
+    SAVE_PAGES = args.save_pages
+    SAVE_WORDS = args.save_words
+    ZIP_FILES = args.zip_files
+    OVERRIDE_SIZE = args.override_size
+    RESTRICT = bool(args.domain)
+    DOMAIN = args.domain if RESTRICT else None
+    TODO_FILE = args.todo_file
+    DONE_FILE = args.done_file
+    if SAVE_WORDS:
+        WORD_FILE = args.word_file
     else:
-        write_log('INIT', 'Should spidy load settings from an available config file? (y/n):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):  # Use default value
-                USE_CONFIG = False
-                break
-            elif input_ in yes:
-                USE_CONFIG = True
-                break
-            elif input_ in no:
-                USE_CONFIG = False
-                break
-            else:
-                handle_invalid_input()
+        WORD_FILE = 'None'
+    SAVE_COUNT = int(args.save_count)
+    HEADER = HEADERS[args.header_preset]
+    MAX_NEW_ERRORS = int(args.max_new_errors)
+    MAX_KNOWN_ERRORS = int(args.max_known_errors)
+    MAX_HTTP_ERRORS = int(args.max_http_errors)
+    MAX_NEW_MIMES = int(args.max_new_mimes)
+    START = args.start
 
-    if USE_CONFIG:
-        write_log('INIT', 'Config file name:', status='INPUT')
-        while True:
-            input_ = input()
-            try:
-                if input_[-4:] == '.cfg':
-                    file_path = path.join(PACKAGE_DIR, 'config', input_)
-                else:
-                    file_path = path.join(PACKAGE_DIR, 'config', '{0}.cfg'.format(input_))
-                write_log('INIT', 'Loading configuration settings from {0}'.format(file_path))
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
-                    for line in file.readlines():
-                        exec(line, globals())
-                break
-            except FileNotFoundError:
-                write_log('INIT', 'Config file not found.', status='ERROR')
-                # raise FileNotFoundError()
-            
-            write_log('INIT', 'Please name a valid .cfg file.')
-
-    else:
-        write_log('INIT', 'Please enter the following arguments. Leave blank to use the default values.')
-
-        write_log('INIT', 'How many parallel threads should be used for crawler? (Default: 1):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                THREAD_COUNT = 1
-                break
-            elif input_.isdigit():
-                THREAD_COUNT = int(input_)
-                break
-            else:
-                handle_invalid_input('integer.')
-
-        write_log('INIT', 'Should spidy load from existing save files? (y/n) (Default: Yes):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                OVERWRITE = False
-                break
-            elif input_ in yes:
-                OVERWRITE = False
-                break
-            elif input_ in no:
-                OVERWRITE = True
-                break
-            else:
-                handle_invalid_input()
-
-        write_log('INIT', 'Should spidy raise NEW errors and stop crawling? (y/n) (Default: No):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                RAISE_ERRORS = False
-                break
-            elif input_ in yes:
-                RAISE_ERRORS = True
-                break
-            elif input_ in no:
-                RAISE_ERRORS = False
-                break
-            else:
-                handle_invalid_input()
-
-        write_log('INIT', 'Should spidy save the pages it scrapes to the saved folder? (y/n) (Default: Yes):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                SAVE_PAGES = True
-                break
-            elif input_ in yes:
-                SAVE_PAGES = True
-                break
-            elif input_ in no:
-                SAVE_PAGES = False
-                break
-            else:
-                handle_invalid_input()
-
-        if SAVE_PAGES:
-            write_log('INIT', 'Should spidy zip saved documents when autosaving? (y/n) (Default: No):', status='INPUT')
-            while True:
-                input_ = input()
-                if not bool(input_):
-                    ZIP_FILES = False
-                    break
-                elif input_ in yes:
-                    ZIP_FILES = True
-                    break
-                elif input_ in no:
-                    ZIP_FILES = False
-                    break
-                else:
-                    handle_invalid_input()
-        else:
-            ZIP_FILES = False
-
-        write_log('INIT', 'Should spidy download documents larger than 500 MB? (y/n) (Default: No):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                OVERRIDE_SIZE = False
-                break
-            elif input_ in yes:
-                OVERRIDE_SIZE = True
-                break
-            elif input_ in no:
-                OVERRIDE_SIZE = False
-                break
-            else:
-                handle_invalid_input()
-
-        write_log('INIT', 'Should spidy scrape words and save them? (y/n) (Default: Yes):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                SAVE_WORDS = True
-                break
-            elif input_ in yes:
-                SAVE_WORDS = True
-                break
-            elif input_ in no:
-                SAVE_WORDS = False
-                break
-            else:
-                handle_invalid_input()
-
-        write_log('INIT', 'Should spidy restrict crawling to a specific domain only? (y/n) (Default: No):',
-                  status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                RESTRICT = False
-                break
-            elif input_ in yes:
-                RESTRICT = True
-                break
-            elif input_ in no:
-                RESTRICT = False
-                break
-            else:
-                handle_invalid_input()
-
-        if RESTRICT:
-            write_log('INIT', 'What domain should crawling be limited to? Can be subdomains, http/https, etc.',
-                      status='INPUT')
-            while True:
-                input_ = input()
-                try:
-                    DOMAIN = input_
-                    break
-                except KeyError:
-                    handle_invalid_input('string.')
-
-        write_log('INIT', 'Should spidy respect sites\' robots.txt? (y/n) (Default: Yes):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                RESPECT_ROBOTS = True
-                break
-            elif input_ in yes:
-                RESPECT_ROBOTS = True
-                break
-            elif input_ in no:
-                RESPECT_ROBOTS = False
-                break
-            else:
-                handle_invalid_input()
-
-        write_log('INIT', 'What HTTP browser headers should spidy imitate?', status='INPUT')
-        write_log('INIT', 'Choices: spidy (default), Chrome, Firefox, IE, Edge, Custom:', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                HEADER = HEADERS['spidy']
-                break
-            elif input_.lower() == 'custom':
-                # Here we just trust that the user is inputting valid headers...
-                write_log('INIT', 'Valid HTTP headers:', status='INPUT')
-                HEADER = input()
-                break
-            else:
-                try:
-                    HEADER = HEADERS[input_]
-                    break
-                except KeyError:
-                    handle_invalid_input('browser name.')
-
-        write_log('INIT', 'Location of the TODO save file (Default: crawler_todo.txt):', status='INPUT')
-        input_ = input()
-        if not bool(input_):
-            TODO_FILE = 'crawler_todo.txt'
-        else:
-            TODO_FILE = input_
-
-        write_log('INIT', 'Location of the DONE save file (Default: crawler_done.txt):', status='INPUT')
-        input_ = input()
-        if not bool(input_):
-            DONE_FILE = 'crawler_done.txt'
-        else:
-            DONE_FILE = input_
-
-        if SAVE_WORDS:
-            write_log('INIT', 'Location of the words save file (Default: crawler_words.txt):', status='INPUT')
-            input_ = input()
-            if not bool(input_):
-                WORD_FILE = 'crawler_words.txt'
-            else:
-                WORD_FILE = input_
-        else:
-            WORD_FILE = 'None'
-
-        write_log('INIT', 'After how many queried links should the crawler autosave? (Default: 100):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                SAVE_COUNT = 100
-                break
-            elif input_.isdigit():
-                SAVE_COUNT = int(input_)
-                break
-            else:
-                handle_invalid_input('integer.')
-
-        if not RAISE_ERRORS:
-            write_log('INIT', 'After how many new errors should spidy stop? (Default: 5):', status='INPUT')
-            while True:
-                input_ = input()
-                if not bool(input_):
-                    MAX_NEW_ERRORS = 5
-                    break
-                elif input_.isdigit():
-                    MAX_NEW_ERRORS = int(input_)
-                    break
-                else:
-                    handle_invalid_input('integer.')
-        else:
-            MAX_NEW_ERRORS = 1
-
-        write_log('INIT', 'After how many known errors should spidy stop? (Default: 10):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                MAX_KNOWN_ERRORS = 20
-                break
-            elif input_.isdigit():
-                MAX_KNOWN_ERRORS = int(input_)
-                break
-            else:
-                handle_invalid_input('integer.')
-
-        write_log('INIT', 'After how many HTTP errors should spidy stop? (Default: 20):', status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                MAX_HTTP_ERRORS = 50
-                break
-            elif not input_.isdigit():
-                MAX_HTTP_ERRORS = int(input_)
-                break
-            else:
-                handle_invalid_input('integer.')
-
-        write_log('INIT', 'After encountering how many new MIME types should spidy stop? (Default: 20):',
-                  status='INPUT')
-        while True:
-            input_ = input()
-            if not bool(input_):
-                MAX_NEW_MIMES = 10
-                break
-            elif input_.isdigit():
-                MAX_NEW_MIMES = int(input_)
-                break
-            else:
-                handle_invalid_input('integer')
-
-        # Remove INPUT variable from memory
-        del input_
+    # Parse custom headers
+    for pair in args.header:
+        try:
+            k, v = pair.split('=')
+        except ValueError:
+            write_log('INIT', 'Invalid header key=value pair: ' + pair)
+            exit(1)
+        HEADER[k] = v
 
     if OVERWRITE:
         write_log('INIT', 'Creating save files...')
@@ -1182,20 +898,20 @@ def init():
             DONE.put(line.strip())
         del contents
 
-        # If TODO list is empty, add default starting pages
+    # If TODO list is empty, add default starting pages
     if TODO.qsize() == 0:
         for start in START:
             TODO.put(start)
 
 
-def spawn_threads(robots_index):
+def spawn_threads():
     """
     Spawn the crawler threads
     """
     try:
         write_log('INIT', 'Spawning {0} worker threads...'.format(THREAD_COUNT))
         for i in range(THREAD_COUNT):
-            t = threading.Thread(target=crawl_worker, args=(i+1, robots_index))
+            t = threading.Thread(target=crawl_worker, args=(i+1,))
             write_log('INIT', 'Starting crawl...', worker=i+1)
             t.daemon = True
             t.start()
@@ -1250,7 +966,7 @@ def main():
     global MAX_NEW_ERRORS, MAX_KNOWN_ERRORS, MAX_HTTP_ERRORS, MAX_NEW_MIMES
     global USE_CONFIG, OVERWRITE, RAISE_ERRORS, ZIP_FILES, OVERRIDE_SIZE, SAVE_WORDS, SAVE_PAGES, SAVE_COUNT
     global TODO_FILE, DONE_FILE, ERR_LOG_FILE, WORD_FILE
-    global RESPECT_ROBOTS, RESTRICT, DOMAIN
+    global RESTRICT, DOMAIN
     global WORDS, TODO, DONE
 
     try:
@@ -1273,10 +989,8 @@ def main():
 
     write_log('INIT', 'Using headers: {0}'.format(HEADER))
 
-    robots_index = RobotsIndex(RESPECT_ROBOTS, HEADER['User-Agent'])
-
     # Spawn threads here
-    spawn_threads(robots_index)
+    spawn_threads()
 
 
 if __name__ == '__main__':

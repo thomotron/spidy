@@ -1,19 +1,19 @@
 # To run spidy in a container and write all files back to the host filesystem:
 #   docker run --rm -it -v $PWD:/data spidy
 
-FROM python:3.6
+FROM alpine:latest
 LABEL maintainer "Peter Benjamin <petermbenjamin@gmail.com>"
+
+# Install Python and package manager dependencies
+RUN apk add git python3 py3-pip py3-lxml py3-requests py3-wheel
+
+# Copy in Spidy
 WORKDIR /src/app/
 COPY . .
+
+# Install pip dependencies
+RUN pip install -r requirements.txt
+
 VOLUME [ "/data" ]
 
-RUN apt-get update \
-    && apt-get install -y \
-    --no-install-recommends \
-    python3 \
-    python3-lxml \
-    python3-requests \
-    && rm -rf /var/cache/apt/* \
-    && pip install -r requirements.txt
-
-ENTRYPOINT [ "python", "spidy/crawler.py" ]
+ENTRYPOINT [ "python3", "spidy/crawler.py" ]
