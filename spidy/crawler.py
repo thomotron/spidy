@@ -10,6 +10,7 @@ import urllib
 import threading
 import queue
 import logging
+import re
 
 from os import path, makedirs
 from copy import copy
@@ -402,7 +403,7 @@ def check_link(item):
     # Shortest possible url being 'http://a.b', and
     # Links longer than 255 characters are usually too long for the filesystem to handle.
     if RESTRICT:
-        if DOMAIN not in item:
+        if DOMAIN not in item or URL_REGEX.search(item) == None:
             return True
     if len(item) < 10 or len(item) > 255:
         return True
@@ -786,7 +787,7 @@ no = ['n', 'no', 'N', 'No', 'False', 'false']
 HEADER = {}
 SAVE_COUNT, MAX_NEW_ERRORS, MAX_KNOWN_ERRORS, MAX_HTTP_ERRORS = 0, 0, 0, 0
 MAX_NEW_MIMES = 0
-RESTRICT, DOMAIN = False, ''
+RESTRICT, DOMAIN, URL_REGEX = False, '', re.compile('')
 USE_CONFIG, OVERWRITE, RAISE_ERRORS, ZIP_FILES, OVERRIDE_SIZE = False, False, False, False, False
 SAVE_PAGES, SAVE_WORDS = False, False
 TODO_FILE, DONE_FILE, WORD_FILE = '', '', ''
@@ -811,7 +812,7 @@ def init():
     global MAX_NEW_ERRORS, MAX_KNOWN_ERRORS, MAX_HTTP_ERRORS, MAX_NEW_MIMES
     global USE_CONFIG, OVERWRITE, RAISE_ERRORS, ZIP_FILES, OVERRIDE_SIZE, SAVE_WORDS, SAVE_PAGES, SAVE_COUNT
     global TODO_FILE, DONE_FILE, ERR_LOG_FILE, WORD_FILE
-    global RESTRICT, DOMAIN
+    global RESTRICT, DOMAIN, URL_REGEX
     global WORDS, TODO, DONE, THREAD_COUNT, START
 
     # Getting Arguments
@@ -827,6 +828,7 @@ def init():
     parser.add_argument('-z', '--zip-files',    action='store_true',                        help='Zip save files (default: %(default)s)')
     parser.add_argument('--override-size',      action='store_true',                        help='Allow downloading documents larger than 500MB (default: %(default)s)')
     parser.add_argument('-d', '--domain',       default='',                                 help='Domain or base URI to restrict crawling to')
+    parser.add_argument('-r', '--url-regex',    default='', metavar='EXPRESSION',           help='Regular expression to filter URLs with (default: %(default)s)')
     parser.add_argument('--todo-file',          default='crawler_todo.txt', metavar='PATH', help='Path to TODO file (default: %(default)s)')
     parser.add_argument('--done-file',          default='crawler_done.txt', metavar='PATH', help='Path to DONE file (default: %(default)s)')
     parser.add_argument('--word-file',          default='crawler_words.txt', metavar='PATH',help='Path to words file (default: %(default)s)')
@@ -850,6 +852,7 @@ def init():
     OVERRIDE_SIZE = args.override_size
     RESTRICT = bool(args.domain)
     DOMAIN = args.domain if RESTRICT else None
+    URL_REGEX = re.compile(args.url_regex)
     TODO_FILE = args.todo_file
     DONE_FILE = args.done_file
     if SAVE_WORDS:
