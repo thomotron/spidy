@@ -16,4 +16,4 @@ RUN pip install -r requirements.txt
 
 VOLUME [ "/data" ]
 
-ENTRYPOINT [ "python", "spidy/crawler.py" ]
+ENTRYPOINT [ "python3", "spidy/crawler.py" ]
