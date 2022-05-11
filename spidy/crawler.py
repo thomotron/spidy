@@ -876,7 +876,7 @@ def init():
     parser.add_argument('--word-file',          default='crawler_words.txt', metavar='PATH',help='Path to words file (default: %(default)s)')
     parser.add_argument('--save-count',         default=100, metavar='NUM', type=int,       help='Number of queries before saving (default: %(default)d)')
     parser.add_argument('--header-preset',      default='spidy', choices=HEADERS.keys(), metavar='PRESET', help='Header preset to use for crawler (default: %(default)s)')
-    parser.add_argument('--header',             action='append', default=[],                help='Custom header to use for crawler. Interpreted as key=value pair')
+    parser.add_argument('--header',             action='append', default=[],                help='Custom header to use for crawler. Interpreted as key=value pair. Can be specified more than once for multiple headers')
     parser.add_argument('--max-new-errors',     default=5, metavar='NUM', type=int,         help='Number of new errors before stopping crawler (default: %(default)d)')
     parser.add_argument('--max-known-errors',   default=10, metavar='NUM', type=int,        help='Number of known errors before stopping cralwer (default: %(default)d)')
     parser.add_argument('--max-http-errors',    default=20, metavar='NUM', type=int,        help='Number of HTTP errors before stopping crawler (default: %(default)d)')
@@ -912,7 +912,7 @@ def init():
     # Parse custom headers
     for pair in args.header:
         try:
-            k, v = pair.split('=')
+            k, v = pair.split('=', 1)
         except ValueError:
             write_log('INIT', 'Invalid header key=value pair: ' + pair)
             exit(1)
